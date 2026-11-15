@@ -35,7 +35,14 @@ The plugin is a DSH bundle. Install the directory:
 dsh plugin --profile <your-profile> add /absolute/path/to/dsh-auto-model
 ```
 
-Or use **Plugins → Add plugin → local directory**. Restart DSH when the bundle list changes, then enable **切模插件** in **Plugins**.
+Or use **Plugins → Add plugin → local directory**.
+Install straight from GitHub instead of a local checkout:
+
+```sh
+dsh plugin --profile <your-profile> add github:universe-st/dsh-auto-model
+```
+
+Restart DSH when the bundle list changes, then enable **切模插件** in **Plugins**.
 
 Requirements: DSH `0.2.x` with the `llm` and `sessionProjections` services (both are part of the standard deployment).
 

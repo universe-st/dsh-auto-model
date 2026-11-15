@@ -35,7 +35,15 @@
 dsh plugin --profile <你的 profile> add /绝对路径/dsh-auto-model
 ```
 
-或在 **插件 → 添加插件 → 本地目录**。bundle 列表变化后重启 DSH，然后在**插件**页启用「切模插件」。
+或在 **插件 → 添加插件 → 本地目录**。
+
+也可以直接从 GitHub 安装：
+
+```sh
+dsh plugin --profile <你的 profile> add github:universe-st/dsh-auto-model
+```
+
+bundle 列表变化后重启 DSH，然后在**插件**页启用「切模插件」。
 
 要求：DSH `0.2.x`，并包含 `llm` 与 `sessionProjections` 服务（标准部署均具备）。
 
