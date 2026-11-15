@@ -1,0 +1,5 @@
+# Installs the Auto model (切模插件) Host plugin.
+# The row id doubles as the settings namespace the configuration page writes to.
+- insert:
+    - id: auto-model
+      name: 'dsh-auto-model'

@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Auto model">
+  <defs>
+    <linearGradient id="auto-model-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2f6fed"/>
+      <stop offset="1" stop-color="#1b3fb0"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#auto-model-bg)"/>
+  <!-- Three routing lanes converging into one switched output. -->
+  <g fill="none" stroke="#ffffff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M16 20h10c5 0 7 5 10 9"/>
+    <path d="M16 32h20"/>
+    <path d="M16 44h10c5 0 7-5 10-9"/>
+    <path d="M38 32h10"/>
+  </g>
+  <circle cx="51" cy="32" r="4.2" fill="#ffffff"/>
+  <circle cx="16" cy="20" r="2.4" fill="#ffffff"/>
+  <circle cx="16" cy="32" r="2.4" fill="#ffffff"/>
+  <circle cx="16" cy="44" r="2.4" fill="#ffffff"/>
+</svg>

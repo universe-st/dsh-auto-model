@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Auto model",
+    "description": "Adds virtual models under the provider 切模插件 and forwards each request to a real model chosen by ordered switching rules.",
+    "detail": "docs/DETAIL.md"
+  }
+}
