@@ -44,7 +44,7 @@ dsh plugin --profile <your-profile> add github:universe-st/dsh-auto-model
 
 Restart DSH when the bundle list changes, then enable **切模插件** in **Plugins**.
 
-Requirements: DSH `0.2.x` with the `llm` and `sessionProjections` services (both are part of the standard deployment).
+Requirements: DSH `>=0.2.2-rc.3 <0.3.0-0`, declared as `engines.dsh` so an unsupported Harness refuses the install instead of loading a bundle that no longer fits. The plugin needs the `llm` and `sessionProjections` services (both part of the standard deployment).
 
 ## Configure
 
@@ -59,7 +59,7 @@ The optional **capability reference** model supplies the advertised context wind
 
 | Rule | Matches when |
 |---|---|
-| Daily time range | The request clock is inside `from`–`to`; overnight ranges wrap; optional weekdays and IANA time zone. |
+| Daily time range | The request clock is inside the half-open range `[from, to)`; overnight ranges wrap, `from = to` means all day; optional weekdays and IANA time zone. |
 | Date and time range | The request time lies between two exact date-times. |
 | First user message contains keyword | The conversation's first user message contains any keyword. |
 | Recent user messages contain keyword | Any of the last N user messages contains any keyword. |
@@ -72,10 +72,15 @@ Place a **recent failure** rule above time or keyword rules. Selection stops at 
 ## Retry and failover semantics
 
 - The plugin performs retries inside the request using the real provider's own resolved retry policy and backoff, including provider `Retry-After` hints.
+- A `Retry-After` hint is honored even when it is longer than the local backoff ceiling. If that pause would not fit the remaining `retryBudgetMs`, the target is abandoned immediately and the next one is selected, so a request never sleeps past its own budget.
 - Nothing reaches the agent turn until the attempt produces visible content, so retries and switches are invisible.
 - After a target's retries are exhausted, rule selection runs again with the failure recorded — a **recent failure** rule can now take over. The configured fallback is the last resort.
 - A failure that happens after visible content cannot be retried without duplicating output; it is reported as the stream's failure.
 - `retryBudgetMs` (default 90 s) bounds one target's retries; `0` removes the time bound. `maxSwitches` bounds switches per request.
+
+### State and restart
+
+Routing memory (the current real target and the failure ledger) lives in the plugin process, not in the session log. After a DSH restart the ledger is empty, so a **recent failure** rule starts answering from the fallback until a new failure is recorded; the session-list hint clears and reappears on the next request. Nothing else about a request depends on that memory: rule selection, retries and switches are recomputed from the request itself.
 
 ## Session list hint
 
@@ -83,7 +88,7 @@ The hover card of a session row shows a small line with the real model currently
 
 ## Security
 
-Command rules run shell commands on the Host with your user's permissions. Only configure commands you would run yourself. They require a POSIX shell (`/bin/sh`), so they do not run on Windows.
+Command rules run shell commands on the Host with your user's permissions. Only configure commands you would run yourself. They require a POSIX shell (`/bin/sh`), so they do not run on Windows. Each probe runs in its own process group, so a timeout or an oversized output kills the command and everything it started instead of leaving a stray child behind.
 
 ## Development
 
@@ -91,7 +96,7 @@ Command rules run shell commands on the Host with your user's permissions. Only 
 node --test "test/*.test.js"
 ```
 
-The rule engine, request router and configuration normalization are plain modules with no DSH dependency, so they run under plain Node; the bundle itself is loaded by DSH.
+The rule engine, request router and configuration normalization are plain modules with no DSH dependency, so they run under plain Node; the bundle itself is loaded by DSH. `test/client-parity.test.js` loads the Client half under a stub module loader and fails when the configuration page's validation drifts from the Host normalizer that silently drops unusable entries.
 
 ## License
 

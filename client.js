@@ -146,7 +146,9 @@ window.__ModuleLoader__.load({
       'problem.ruleKeywords': 'Rule {index} of "{id}" needs at least one keyword.',
       'problem.ruleCommand': 'Rule {index} of "{id}" needs a command.',
       'problem.ruleClock': 'Rule {index} of "{id}" needs a valid from/to time.',
+      'problem.ruleZone': 'Rule {index} of "{id}" has an unknown time zone.',
       'problem.ruleDates': 'Rule {index} of "{id}" needs a valid from/to date.',
+      'problem.targetSelf': '"{id}" cannot forward to the auto-model provider itself.',
       'hint.label': 'Real model',
       'hint.virtual': 'Virtual',
     }
@@ -248,7 +250,9 @@ window.__ModuleLoader__.load({
       'problem.ruleKeywords': '“{id}”的第 {index} 条规则至少需要一个关键字。',
       'problem.ruleCommand': '“{id}”的第 {index} 条规则需要填写命令。',
       'problem.ruleClock': '“{id}”的第 {index} 条规则需要合法的开始/结束时间。',
+      'problem.ruleZone': '“{id}”的第 {index} 条规则填写了无法识别的时区。',
       'problem.ruleDates': '“{id}”的第 {index} 条规则需要合法的开始/结束日期。',
+      'problem.targetSelf': '“{id}”不能把请求转给「切模插件」这个提供商本身。',
       'hint.label': '真实模型',
       'hint.virtual': '自切',
     }
@@ -781,7 +785,36 @@ window.__ModuleLoader__.load({
           }))))
     }
 
-    /** Local validation: the Host silently drops an unusable entry, so the page blocks the save. */
+    const filled = value => typeof value === 'string' && value.trim().length > 0
+
+    const validClock = (value) => {
+      const match = /^(\d{1,2}):(\d{2})$/.exec(typeof value === 'string' ? value.trim() : '')
+      return match !== null && Number(match[1]) <= 23 && Number(match[2]) <= 59
+    }
+
+    const validTimeZone = (value) => {
+      if (typeof value !== 'string' || value.trim().length === 0) return true
+      try {
+        new Intl.DateTimeFormat('en-US', { timeZone: value.trim() })
+        return true
+      } catch {
+        return false
+      }
+    }
+
+    /** Why a `{ provider, model }` pair is unusable: 'missing', 'self', or null. */
+    const targetProblem = (target) => {
+      if (target === null || typeof target !== 'object') return 'missing'
+      if (!filled(target.provider) || !filled(target.model)) return 'missing'
+      // The Host refuses a forward back into this provider, so the page must too.
+      return target.provider.trim() === PROVIDER_ID ? 'self' : null
+    }
+
+    /**
+     * Local validation: the Host silently drops an unusable entry, so the page
+     * blocks the save. Each check mirrors `lib/state.js`; `test/client-parity.test.js`
+     * fails when the two drift apart, so change both together.
+     */
     function problemsOf(draft, t) {
       const problems = []
       const models = Array.isArray(draft.virtualModels) ? draft.virtualModels : []
@@ -793,26 +826,32 @@ window.__ModuleLoader__.load({
         if (id.length === 0 || id.includes('/') || /\s/.test(id)) problems.push(t('problem.modelId'))
         else if (seen.has(id)) problems.push(t('problem.modelIdDuplicate', { id }))
         seen.add(id)
-        const fallback = model.fallback
-        if (fallback === null || fallback === undefined || !fallback.provider || !fallback.model) {
-          problems.push(t('problem.fallback', { id: label }))
+        const fallbackProblem = targetProblem(model.fallback)
+        if (fallbackProblem !== null) {
+          problems.push(t(fallbackProblem === 'self' ? 'problem.targetSelf' : 'problem.fallback', { id: label }))
         }
         const rules = Array.isArray(model.rules) ? model.rules : []
         rules.forEach((rule, ruleIndex) => {
           const at = ruleIndex + 1
-          const target = rule.target
-          if (!target || !target.provider || !target.model) problems.push(t('problem.ruleTarget', { id: label, index: at }))
-          if (rule.type === 'first-message-keyword' || rule.type === 'recent-message-keyword') {
-            if (!Array.isArray(rule.keywords) || rule.keywords.length === 0) problems.push(t('problem.ruleKeywords', { id: label, index: at }))
+          const ruleProblem = targetProblem(rule.target)
+          if (ruleProblem !== null) {
+            problems.push(t(ruleProblem === 'self' ? 'problem.targetSelf' : 'problem.ruleTarget', { id: label, index: at }))
           }
-          if (rule.type === 'command' && (typeof rule.command !== 'string' || rule.command.trim().length === 0)) {
+          if (rule.type === 'first-message-keyword' || rule.type === 'recent-message-keyword') {
+            const keywords = Array.isArray(rule.keywords) ? rule.keywords.filter(keyword => filled(keyword)) : []
+            if (keywords.length === 0) problems.push(t('problem.ruleKeywords', { id: label, index: at }))
+          }
+          if (rule.type === 'command' && !filled(rule.command)) {
             problems.push(t('problem.ruleCommand', { id: label, index: at }))
           }
-          if (rule.type === 'time-of-day' && (!/^\d{1,2}:\d{2}$/.test(rule.from ?? '') || !/^\d{1,2}:\d{2}$/.test(rule.to ?? ''))) {
-            problems.push(t('problem.ruleClock', { id: label, index: at }))
+          if (rule.type === 'time-of-day') {
+            if (!validClock(rule.from) || !validClock(rule.to)) problems.push(t('problem.ruleClock', { id: label, index: at }))
+            if (!validTimeZone(rule.timeZone)) problems.push(t('problem.ruleZone', { id: label, index: at }))
           }
-          if (rule.type === 'datetime-range' && (Number.isNaN(new Date(rule.from).getTime()) || Number.isNaN(new Date(rule.to).getTime()))) {
-            problems.push(t('problem.ruleDates', { id: label, index: at }))
+          if (rule.type === 'datetime-range') {
+            const from = filled(rule.from) ? new Date(rule.from).getTime() : Number.NaN
+            const to = filled(rule.to) ? new Date(rule.to).getTime() : Number.NaN
+            if (Number.isNaN(from) || Number.isNaN(to)) problems.push(t('problem.ruleDates', { id: label, index: at }))
           }
         })
       })
@@ -1021,7 +1060,7 @@ window.__ModuleLoader__.load({
         h('span', { className: `${PREFIX}-hintValue` }, route.modelName ?? route.model))
     }
 
-    return {
+    const entry = {
       inject: ['slots', 'locale', 'remote', 'remote.session'],
       apply(ctx) {
         binding.remote = ctx.remote
@@ -1040,5 +1079,13 @@ window.__ModuleLoader__.load({
         }, SessionHint))
       },
     }
+
+    // Test seam: `test/client-parity.test.js` loads this factory under a stub
+    // loader and compares the page's validation with the Host normalizer. The
+    // flag is never set in a running Harness, so the shipped entry keeps its
+    // manifest shape.
+    if (globalThis.__DSH_AUTO_MODEL_TEST__ === true) entry.problemsOf = problemsOf
+
+    return entry
   },
 })

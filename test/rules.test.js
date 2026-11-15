@@ -36,6 +36,18 @@ test('an overnight time range wraps past midnight', async () => {
   assert.equal(await matchesRule(rule, baseContext({ now: new Date('2026-11-15T12:00:00+08:00') })), false)
 })
 
+test('adjacent ranges do not both match at their shared boundary minute', async () => {
+  const night = { type: 'time-of-day', from: '22:00', to: '06:00', target: target('night') }
+  const morning = { type: 'time-of-day', from: '06:00', to: '12:00', target: target('morning') }
+  const atSix = baseContext({ now: new Date('2026-11-15T06:00:00+08:00') })
+  assert.equal(await matchesRule(night, atSix), false)
+  assert.equal(await matchesRule(morning, atSix), true)
+  const atNoon = baseContext({ now: new Date('2026-11-15T12:00:00+08:00') })
+  assert.equal(await matchesRule(morning, atNoon), false)
+  // An equal pair is still the convenient "all day" spelling.
+  assert.equal(await matchesRule({ ...morning, from: '09:00', to: '09:00' }, baseContext()), true)
+})
+
 test('weekday filters restrict a time-of-day rule', async () => {
   // 2026-11-15 is a Sunday (ISO 7).
   const rule = { type: 'time-of-day', from: '00:00', to: '23:59', days: [1, 2, 3, 4, 5], target: target('a') }

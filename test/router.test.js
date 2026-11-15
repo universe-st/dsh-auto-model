@@ -92,11 +92,49 @@ test('the retry budget scopes retries of one target', async () => {
     scripts: { 'p1/primary': [[failure()], [failure()], [okFinish]] },
     policies: { p1: { mode: 'normal', maxRetries: 5, retryableCodes: ['RATE_LIMIT'], initialDelayMs: 5000, maxDelayMs: 5000, jitterRatio: 0 } },
   })
-  // The budget is checked after each failure, so the first retry runs and its
-  // 5s backoff then exceeds the 1ms budget.
+  // The next wait is already larger than the whole budget, so the target is
+  // abandoned without sleeping it away.
   const chunks = await collect({ provider: 'auto-model', model: 'auto', messages: [] }, deps)
   assert.equal(chunks.at(-1).reason.kind, 'error')
-  assert.deepEqual(calls, ['p1/primary', 'p1/primary'])
+  assert.deepEqual(calls, ['p1/primary'])
+})
+
+test('a provider Retry-After longer than the local maximum is honored inside the budget', async () => {
+  const { deps, calls } = harness({
+    model: baseModel,
+    live: { retryBudgetMs: 60000 },
+    scripts: {
+      'p1/primary': [
+        [{ type: 'finish', reason: { kind: 'error', failure: { code: 'RATE_LIMIT', providerRetryAfterMs: 3000 } } }],
+        [text, okFinish],
+      ],
+    },
+    policies: { p1: { mode: 'normal', maxRetries: 2, retryableCodes: ['RATE_LIMIT'], initialDelayMs: 10, maxDelayMs: 1000, jitterRatio: 0 } },
+  })
+  const chunks = await collect({ provider: 'auto-model', model: 'auto', messages: [] }, deps)
+  assert.deepEqual(chunks, [text, okFinish])
+  assert.equal(calls.length, 2)
+})
+
+test('a retry wait longer than the remaining budget switches instead of waiting', async () => {
+  const model = {
+    ...baseModel,
+    rules: [
+      { id: 'time', type: 'time-of-day', enabled: true, from: '00:00', to: '23:59', target: { provider: 'p2', model: 'day' } },
+    ],
+  }
+  const { deps, calls } = harness({
+    model,
+    live: { retryBudgetMs: 5000 },
+    scripts: {
+      'p2/day': [[{ type: 'finish', reason: { kind: 'error', failure: { code: 'RATE_LIMIT', providerRetryAfterMs: 30000 } } }]],
+      'p1/primary': [[text, okFinish]],
+    },
+    policies: { p2: { mode: 'normal', maxRetries: 3, retryableCodes: ['RATE_LIMIT'], initialDelayMs: 10, maxDelayMs: 1000, jitterRatio: 0 } },
+  })
+  const chunks = await collect({ provider: 'auto-model', model: 'auto', messages: [] }, deps)
+  assert.deepEqual(chunks, [text, okFinish])
+  assert.deepEqual(calls, ['p2/day', 'p1/primary'])
 })
 
 test('an exhausted target switches to the target of the failure rule', async () => {
@@ -155,6 +193,50 @@ test('no target left reports the last failure upward', async () => {
   assert.equal(calls.length, 6)
 })
 
+test('an exhausted switch budget reports the failure without logging a switch', async () => {
+  const model = {
+    ...baseModel,
+    rules: [
+      { id: 'time', type: 'time-of-day', enabled: true, from: '00:00', to: '23:59', target: { provider: 'p2', model: 'day' } },
+    ],
+  }
+  const { deps } = harness({ model, live: { maxSwitches: 0 }, scripts: { 'p2/day': [[failure('AUTH')]] } })
+  const infos = []
+  deps.logger = { debug() {}, info: (message) => infos.push(message), warn() {} }
+  const chunks = await collect({ provider: 'auto-model', model: 'auto', messages: [] }, deps)
+  assert.equal(chunks.at(-1).reason.failure.code, 'AUTH')
+  assert.deepEqual(infos, [])
+})
+
+test('a call without a Session keeps its ledger per virtual model', async () => {
+  const keys = []
+  const { deps } = harness({ model: baseModel, scripts: { 'p1/primary': [[failure('AUTH')]] } })
+  deps.recordFailure = (key) => keys.push(key)
+  deps.setCurrentTarget = (key) => keys.push(key)
+  deps.failuresFor = (key) => { keys.push(`read:${key}`); return [] }
+  deps.currentTargetFor = (key) => { keys.push(`current:${key}`); return null }
+
+  await collect({ provider: 'auto-model', model: 'auto', messages: [] }, deps)
+
+  assert.ok(keys.length > 0)
+  for (const key of keys) assert.ok(key.includes('@no-session\u0000auto'), key)
+})
+
+test('an auxiliary producer reads a Session route without writing it', async () => {
+  const reads = []
+  const writes = []
+  const { deps } = harness({ model: baseModel, scripts: { 'p1/primary': [[okFinish]] } })
+  deps.failuresFor = (key) => { reads.push(`failures:${key}`); return [] }
+  deps.currentTargetFor = (key) => { reads.push(`current:${key}`); return null }
+  deps.recordFailure = (key) => writes.push(key)
+  deps.setCurrentTarget = (key) => writes.push(key)
+
+  await collect({ provider: 'auto-model', model: 'auto', messages: [], sessionId: 's1', purpose: 'title' }, deps)
+
+  assert.deepEqual(writes, [])
+  assert.deepEqual(reads, ['failures:s1', 'current:s1'])
+})
+
 test('a stream without a terminal chunk is retried as an empty response', async () => {
   const { deps, calls } = harness({
     model: baseModel,
@@ -188,11 +270,12 @@ test('cancellation before the first token reports an aborted finish', async () =
   assert.deepEqual(calls, [])
 })
 
-test('backoff respects provider Retry-After inside the bounds and jitters locals', () => {
+test('backoff honors any provider Retry-After and jitters local delays', () => {
   const policy = { mode: 'normal', maxRetries: 3, retryableCodes: ['RATE_LIMIT'], initialDelayMs: 100, maxDelayMs: 1000, jitterRatio: 0 }
   assert.equal(backoffDelay(policy, 1, { providerRetryAfterMs: 250 }), 250)
-  assert.equal(backoffDelay(policy, 1, { providerRetryAfterMs: 5000 }), 100)
+  assert.equal(backoffDelay(policy, 1, { providerRetryAfterMs: 5000 }), 5000)
   assert.equal(backoffDelay(policy, 3, {}), 400)
+  assert.equal(backoffDelay(policy, 9, {}), 1000)
   assert.equal(policyAllowsRetry(policy, { code: 'RATE_LIMIT' }, 2), true)
   assert.equal(policyAllowsRetry(policy, { code: 'RATE_LIMIT' }, 3), false)
   assert.equal(policyAllowsRetry(policy, { code: 'AUTH' }, 0), false)

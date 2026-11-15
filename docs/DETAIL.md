@@ -43,7 +43,7 @@ switching rules. Model selectors show it under the provider **切模插件**.
 
 | Rule | Matches when |
 |---|---|
-| Daily time range | The request clock is inside `from`–`to` (overnight ranges wrap), optionally limited to weekdays and an IANA time zone. |
+| Daily time range | The request clock is inside the half-open range `[from, to)`; overnight ranges wrap, `from = to` means all day; optionally limited to weekdays and an IANA time zone. |
 | Date and time range | The request time is between two exact date-times. |
 | First user message contains keyword | The conversation's first user message contains any keyword. |
 | Recent user messages contain keyword | Any of the last N user messages contains any keyword. |
@@ -90,6 +90,13 @@ yourself.
   is zero attempts to avoid double retrying.
 - A `retryBudgetMs` safety stop (default 90 s) bounds one target's retries; set
   it to `0` to follow the provider policy without a time limit, including
-  always-retry providers.
+  always-retry providers. A `Retry-After` hint longer than the local ceiling is
+  honored when the budget can pay for it, and otherwise the target is abandoned
+  without sleeping.
+- Routing memory (current target and failure ledger) is per process, so a
+  restart empties it: a **recent failure** rule keeps using the fallback until a
+  new failure is recorded, and the session-list hint returns on the next request.
+- A command probe runs in its own process group, so a timeout or an oversized
+  output kills the command and everything it started.
 - Subagents and auxiliary model calls that select a virtual model route through
   the same rules.
